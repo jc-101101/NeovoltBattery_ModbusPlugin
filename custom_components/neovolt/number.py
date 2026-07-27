@@ -91,23 +91,29 @@ async def async_setup_entry(
             default_value=3.0, icon="mdi:lightning-bolt",
             config_entry=entry
         ),
+        # NOTE: default_value for these three entities is seeded from the
+        # coordinator's *persisted* targets (loaded from entry.options in
+        # coordinator.__init__), not a hardcoded number. This ensures the
+        # slider shows the user's real last-set value after a HA restart or
+        # integration reload, instead of silently resetting to 120min/100%/10%.
+        # See GitHub issue #16 ("Discharge duration reset").
         NeovoltNumber(
             coordinator, device_info, device_name, client, hass,
             "dispatch_duration", "Dispatch Duration",
             1, 480, 1, UnitOfTime.MINUTES, None, False,
-            default_value=120, icon="mdi:timer"
+            default_value=coordinator._dispatch_duration_minutes, icon="mdi:timer"
         ),
         NeovoltNumber(
             coordinator, device_info, device_name, client, hass,
             "dispatch_charge_soc", "Dispatch Charge Target SOC",
             10, 100, 1, PERCENTAGE, None, False,
-            default_value=100, icon="mdi:battery-charging-high"
+            default_value=coordinator._dispatch_charge_soc, icon="mdi:battery-charging-high"
         ),
         NeovoltNumber(
             coordinator, device_info, device_name, client, hass,
             "dispatch_discharge_soc", "Dispatch Discharge Cutoff SOC",
             4, 100, 1, PERCENTAGE, None, False,
-            default_value=10, icon="mdi:battery-low"
+            default_value=coordinator._dispatch_discharge_soc, icon="mdi:battery-low"
         ),
 
         # ── Dynamic Mode Power Target (local storage) ──────────────────────
@@ -293,6 +299,13 @@ class NeovoltNumber(CoordinatorEntity, NumberEntity):
                     self.coordinator._save_persistent_data()
                 elif self._key == "dispatch_discharge_soc":
                     self.coordinator._dispatch_discharge_soc = float(value)
+                    self.coordinator._save_persistent_data()
+                # Persist dispatch duration so it survives HA reboots/reloads
+                # instead of silently resetting to the 120min default and
+                # causing dynamic/force dispatch modes to terminate early
+                # (GitHub issue #16).
+                elif self._key == "dispatch_duration":
+                    self.coordinator._dispatch_duration_minutes = float(value)
                     self.coordinator._save_persistent_data()
 
                 self.async_write_ha_state()

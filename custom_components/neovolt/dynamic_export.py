@@ -33,6 +33,7 @@ from .const import (
     DYNAMIC_MODE_FAST_POLL_INTERVAL,
     DYNAMIC_SOC_EXPORT_DEFAULT_TARGET_SOC,
     DYNAMIC_SOC_EXPORT_DEFAULT_BUFFER,
+    DISPATCH_DURATION_DEFAULT,
     MODBUS_OFFSET,
     SOC_CONVERSION_FACTOR,
     MAX_SOC_REGISTER,
@@ -214,11 +215,15 @@ class DynamicExportManager:
         # between HA update cycles even if several consecutive cycles are missed.
         self._timeout_seconds = min(duration_minutes * 60, 65535)
 
-        # Pin grid and battery blocks to fast poll rate for the duration of this mode
+        # Pin grid, battery, and dispatch blocks to fast poll rate for the duration
+        # of this mode. Dispatch is included so dispatch_time_remaining stays in
+        # sync with the hardware timer instead of showing a stale cached value
+        # until the adaptive algorithm gets around to polling it.
         self._coordinator.polling_manager.pin_block_interval("grid", DYNAMIC_MODE_FAST_POLL_INTERVAL)
         self._coordinator.polling_manager.pin_block_interval("battery", DYNAMIC_MODE_FAST_POLL_INTERVAL)
+        self._coordinator.pin_dispatch_polling()
         _LOGGER.info(
-            f"Dynamic Export: pinned grid+battery blocks to {DYNAMIC_MODE_FAST_POLL_INTERVAL}s poll interval"
+            f"Dynamic Export: pinned grid+battery+dispatch blocks to {DYNAMIC_MODE_FAST_POLL_INTERVAL}s poll interval"
         )
 
         # Start the control loop as a background task
@@ -238,10 +243,11 @@ class DynamicExportManager:
         _LOGGER.info("Stopping Dynamic Export mode")
         self._running = False
 
-        # Release the fast-poll pin so grid+battery return to adaptive control
+        # Release the fast-poll pins so grid+battery+dispatch return to adaptive control
         self._coordinator.polling_manager.unpin_block_interval("grid")
         self._coordinator.polling_manager.unpin_block_interval("battery")
-        _LOGGER.info("Dynamic Export: released grid+battery poll interval pins")
+        self._coordinator.unpin_dispatch_polling()
+        _LOGGER.info("Dynamic Export: released grid+battery+dispatch poll interval pins")
 
         if self._task:
             self._task.cancel()
@@ -483,6 +489,7 @@ class DynamicExportManager:
             self._coordinator.set_optimistic_value("dispatch_start", 1)
             self._coordinator.set_optimistic_value("dispatch_power", power_watts)
             self._coordinator.set_optimistic_value("dispatch_mode", self._dispatch_mode_tag)
+            self._coordinator.set_optimistic_value("dispatch_time_remaining", self._timeout_seconds)
 
         except Exception as e:
             _LOGGER.error(f"Failed to send Dynamic Export discharge command: {e}")
@@ -525,6 +532,7 @@ class DynamicExportManager:
             self._coordinator.set_optimistic_value("dispatch_start", 1)
             self._coordinator.set_optimistic_value("dispatch_power", -power_watts)
             self._coordinator.set_optimistic_value("dispatch_mode", self._dispatch_mode_tag)
+            self._coordinator.set_optimistic_value("dispatch_time_remaining", self._timeout_seconds)
 
         except Exception as e:
             _LOGGER.error(f"Failed to send Dynamic Export charge command: {e}")
@@ -561,6 +569,7 @@ class DynamicExportManager:
             self._coordinator.set_optimistic_value("dispatch_start", 1)
             self._coordinator.set_optimistic_value("dispatch_power", 0)
             self._coordinator.set_optimistic_value("dispatch_mode", self._dispatch_mode_tag)
+            self._coordinator.set_optimistic_value("dispatch_time_remaining", self._timeout_seconds)
 
         except Exception as e:
             _LOGGER.error(f"Failed to send Dynamic Export standby command: {e}")
@@ -580,8 +589,9 @@ class DynamicExportManager:
             self._coordinator.set_optimistic_value("dispatch_start", 0)
             self._coordinator.set_optimistic_value("dispatch_power", 0)
             self._coordinator.set_optimistic_value("dispatch_mode", 0)
+            self._coordinator.set_optimistic_value("dispatch_time_remaining", DISPATCH_DURATION_DEFAULT)
             
-            # Stop the control loop
+            # Stop the control loop (also unpins grid/battery/dispatch poll pins)
             await self.stop()
             
         except Exception as e:
@@ -790,11 +800,15 @@ class DynamicImportManager:
         # between HA update cycles even if several consecutive cycles are missed.
         self._timeout_seconds = min(duration_minutes * 60, 65535)
 
-        # Pin grid and battery blocks to fast poll rate for the duration of this mode
+        # Pin grid, battery, and dispatch blocks to fast poll rate for the duration
+        # of this mode. Dispatch is included so dispatch_time_remaining stays in
+        # sync with the hardware timer instead of showing a stale cached value
+        # until the adaptive algorithm gets around to polling it.
         self._coordinator.polling_manager.pin_block_interval("grid", DYNAMIC_MODE_FAST_POLL_INTERVAL)
         self._coordinator.polling_manager.pin_block_interval("battery", DYNAMIC_MODE_FAST_POLL_INTERVAL)
+        self._coordinator.pin_dispatch_polling()
         _LOGGER.info(
-            f"Dynamic Import: pinned grid+battery blocks to {DYNAMIC_MODE_FAST_POLL_INTERVAL}s poll interval"
+            f"Dynamic Import: pinned grid+battery+dispatch blocks to {DYNAMIC_MODE_FAST_POLL_INTERVAL}s poll interval"
         )
 
         try:
@@ -813,10 +827,11 @@ class DynamicImportManager:
         _LOGGER.info("Stopping Dynamic Import mode")
         self._running = False
 
-        # Release the fast-poll pin so grid+battery return to adaptive control
+        # Release the fast-poll pins so grid+battery+dispatch return to adaptive control
         self._coordinator.polling_manager.unpin_block_interval("grid")
         self._coordinator.polling_manager.unpin_block_interval("battery")
-        _LOGGER.info("Dynamic Import: released grid+battery poll interval pins")
+        self._coordinator.unpin_dispatch_polling()
+        _LOGGER.info("Dynamic Import: released grid+battery+dispatch poll interval pins")
 
         if self._task:
             self._task.cancel()
@@ -1048,6 +1063,7 @@ class DynamicImportManager:
             self._coordinator.set_optimistic_value("dispatch_start", 1)
             self._coordinator.set_optimistic_value("dispatch_power", -power_watts)
             self._coordinator.set_optimistic_value("dispatch_mode", DISPATCH_MODE_DYNAMIC_IMPORT)
+            self._coordinator.set_optimistic_value("dispatch_time_remaining", self._timeout_seconds)
         except Exception as e:
             _LOGGER.error(f"Failed to send Dynamic Import charge command: {e}")
             raise
@@ -1085,6 +1101,7 @@ class DynamicImportManager:
             self._coordinator.set_optimistic_value("dispatch_start", 1)
             self._coordinator.set_optimistic_value("dispatch_power", power_watts)
             self._coordinator.set_optimistic_value("dispatch_mode", DISPATCH_MODE_DYNAMIC_IMPORT)
+            self._coordinator.set_optimistic_value("dispatch_time_remaining", self._timeout_seconds)
         except Exception as e:
             _LOGGER.error(f"Failed to send Dynamic Import discharge command: {e}")
             raise
@@ -1117,6 +1134,7 @@ class DynamicImportManager:
             self._coordinator.set_optimistic_value("dispatch_start", 1)
             self._coordinator.set_optimistic_value("dispatch_power", 0)
             self._coordinator.set_optimistic_value("dispatch_mode", DISPATCH_MODE_DYNAMIC_IMPORT)
+            self._coordinator.set_optimistic_value("dispatch_time_remaining", self._timeout_seconds)
         except Exception as e:
             _LOGGER.error(f"Failed to send Dynamic Import standby command: {e}")
 
@@ -1133,6 +1151,7 @@ class DynamicImportManager:
             self._coordinator.set_optimistic_value("dispatch_start", 0)
             self._coordinator.set_optimistic_value("dispatch_power", 0)
             self._coordinator.set_optimistic_value("dispatch_mode", 0)
+            self._coordinator.set_optimistic_value("dispatch_time_remaining", DISPATCH_DURATION_DEFAULT)
             await self.stop()
         except Exception as e:
             _LOGGER.error(f"Failed to stop Dynamic Import dispatch: {e}")

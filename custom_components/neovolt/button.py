@@ -14,6 +14,7 @@ from homeassistant.util import dt as dt_util
 from .const import (
     DEVICE_ROLE_FOLLOWER,
     DISPATCH_RESET_VALUES,
+    DISPATCH_DURATION_DEFAULT,
     DOMAIN,
     SYSTEM_TIME_YYMM_REGISTER,
     SYSTEM_TIME_DDHH_REGISTER,
@@ -102,7 +103,9 @@ class NeovoltStopForceChargeDischargeButton(CoordinatorEntity, ButtonEntity):
             self.coordinator.set_optimistic_value("dispatch_start", 0)
             self.coordinator.set_optimistic_value("dispatch_power", 0)
             self.coordinator.set_optimistic_value("dispatch_mode", 0)
+            self.coordinator.set_optimistic_value("dispatch_time_remaining", DISPATCH_DURATION_DEFAULT)
             self.coordinator.soc_watcher_disarm()
+            self.coordinator.unpin_dispatch_polling()
             await self.coordinator.async_request_refresh()
         except Exception as e:
             _LOGGER.error(f"Failed to stop force charge/discharge: {e}")

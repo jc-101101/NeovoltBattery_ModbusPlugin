@@ -32,6 +32,7 @@ from .const import (
     STORAGE_DAILY_PRESERVED,
     STORAGE_DISPATCH_CHARGE_SOC,
     STORAGE_DISPATCH_DISCHARGE_SOC,
+    STORAGE_DISPATCH_DURATION,
 )
 from .coordinator import NeovoltDataUpdateCoordinator
 
@@ -228,6 +229,7 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
         STORAGE_DAILY_PRESERVED,
         STORAGE_DISPATCH_CHARGE_SOC,
         STORAGE_DISPATCH_DISCHARGE_SOC,
+        STORAGE_DISPATCH_DURATION,
     }
 
     # Find any keys that are NOT runtime keys (i.e., actual user-facing config keys).

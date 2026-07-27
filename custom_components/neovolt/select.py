@@ -19,6 +19,7 @@ from .const import (
     DISPATCH_MODE_NO_CHARGE,
     DISPATCH_MODE_NO_DISCHARGE,
     DISPATCH_RESET_VALUES,
+    DISPATCH_DURATION_DEFAULT,
     DOMAIN,
     MAX_SOC_PERCENT,
     MIN_SOC_PERCENT,
@@ -337,7 +338,9 @@ class NeovoltDispatchModeSelect(CoordinatorEntity, SelectEntity):
         self.coordinator.set_optimistic_value("dispatch_start", 0)
         self.coordinator.set_optimistic_value("dispatch_power", 0)
         self.coordinator.set_optimistic_value("dispatch_mode", 0)
+        self.coordinator.set_optimistic_value("dispatch_time_remaining", DISPATCH_DURATION_DEFAULT)
         self.coordinator.soc_watcher_disarm()
+        self.coordinator.unpin_dispatch_polling()
         await self.coordinator.async_request_refresh()
 
     async def _start_force_charge(self):
@@ -425,10 +428,18 @@ class NeovoltDispatchModeSelect(CoordinatorEntity, SelectEntity):
         self.coordinator.set_optimistic_value("dispatch_start", 1)
         self.coordinator.set_optimistic_value("dispatch_power", -power_watts)
         self.coordinator.set_optimistic_value("dispatch_mode", DISPATCH_MODE_POWER_WITH_SOC)
+        # Set the real timeout immediately rather than leaving the stale cached
+        # value in place until the (adaptively-paced) dispatch block next
+        # polls — otherwise the Dispatch Status sensor can briefly show a
+        # leftover value like "1 min" instead of the duration just written.
+        self.coordinator.set_optimistic_value("dispatch_time_remaining", timeout_seconds)
         # Persist the charge target and arm the SOC watcher
         self.coordinator._dispatch_charge_soc = float(soc_target)
         self.coordinator._save_persistent_data()
         self.coordinator.soc_watcher_arm("charge")
+        # Pin the dispatch block to fast polling for the life of this mode so
+        # dispatch_time_remaining / dispatch_power stay in sync with hardware.
+        self.coordinator.pin_dispatch_polling()
         await self.coordinator.async_request_refresh()
 
     async def _start_force_discharge(self):
@@ -515,10 +526,18 @@ class NeovoltDispatchModeSelect(CoordinatorEntity, SelectEntity):
         self.coordinator.set_optimistic_value("dispatch_start", 1)
         self.coordinator.set_optimistic_value("dispatch_power", power_watts)
         self.coordinator.set_optimistic_value("dispatch_mode", DISPATCH_MODE_POWER_WITH_SOC)
+        # Set the real timeout immediately rather than leaving the stale cached
+        # value in place until the (adaptively-paced) dispatch block next
+        # polls — otherwise the Dispatch Status sensor can briefly show a
+        # leftover value like "1 min" instead of the duration just written.
+        self.coordinator.set_optimistic_value("dispatch_time_remaining", timeout_seconds)
         # Persist the discharge cutoff and arm the SOC watcher
         self.coordinator._dispatch_discharge_soc = float(soc_cutoff)
         self.coordinator._save_persistent_data()
         self.coordinator.soc_watcher_arm("discharge")
+        # Pin the dispatch block to fast polling for the life of this mode so
+        # dispatch_time_remaining / dispatch_power stay in sync with hardware.
+        self.coordinator.pin_dispatch_polling()
         await self.coordinator.async_request_refresh()
 
     async def _start_dynamic_export(self):
@@ -552,6 +571,9 @@ class NeovoltDispatchModeSelect(CoordinatorEntity, SelectEntity):
         # Set optimistic values for UI
         self.coordinator.set_optimistic_value("dispatch_start", 1)
         self.coordinator.set_optimistic_value("dispatch_mode", DISPATCH_MODE_DYNAMIC_EXPORT)
+        self.coordinator.set_optimistic_value(
+            "dispatch_time_remaining", self.coordinator.dynamic_export_manager._timeout_seconds
+        )
         # Arm the SOC watcher for discharge direction
         self.coordinator.soc_watcher_arm("discharge")
         await self.coordinator.async_request_refresh()
@@ -587,6 +609,9 @@ class NeovoltDispatchModeSelect(CoordinatorEntity, SelectEntity):
         # Set optimistic values for UI
         self.coordinator.set_optimistic_value("dispatch_start", 1)
         self.coordinator.set_optimistic_value("dispatch_mode", DISPATCH_MODE_DYNAMIC_IMPORT)
+        self.coordinator.set_optimistic_value(
+            "dispatch_time_remaining", self.coordinator.dynamic_import_manager._timeout_seconds
+        )
         # Arm the SOC watcher for charge direction
         self.coordinator.soc_watcher_arm("charge")
         await self.coordinator.async_request_refresh()
@@ -637,6 +662,9 @@ class NeovoltDispatchModeSelect(CoordinatorEntity, SelectEntity):
 
         self.coordinator.set_optimistic_value("dispatch_start", 1)
         self.coordinator.set_optimistic_value("dispatch_mode", DISPATCH_MODE_DYNAMIC_SOC_EXPORT)
+        self.coordinator.set_optimistic_value(
+            "dispatch_time_remaining", self.coordinator.dynamic_soc_export_manager._timeout_seconds
+        )
         # Arm the SOC watcher for discharge direction — enforces the hard cutoff
         # floor regardless of whether the manager itself is still running.
         self.coordinator.soc_watcher_arm("discharge")
@@ -681,6 +709,8 @@ class NeovoltDispatchModeSelect(CoordinatorEntity, SelectEntity):
         self.coordinator.set_optimistic_value("dispatch_start", 1)
         self.coordinator.set_optimistic_value("dispatch_power", 0)
         self.coordinator.set_optimistic_value("dispatch_mode", DISPATCH_MODE_NO_CHARGE)
+        self.coordinator.set_optimistic_value("dispatch_time_remaining", min(duration * 60, 65535))
+        self.coordinator.pin_dispatch_polling()
         await self.coordinator.async_request_refresh()
 
     async def _start_no_battery_discharge(self):
@@ -744,6 +774,8 @@ class NeovoltDispatchModeSelect(CoordinatorEntity, SelectEntity):
         self.coordinator.set_optimistic_value("dispatch_start", 1)
         self.coordinator.set_optimistic_value("dispatch_power", 0)
         self.coordinator.set_optimistic_value("dispatch_mode", DISPATCH_MODE_NO_DISCHARGE)
+        self.coordinator.set_optimistic_value("dispatch_time_remaining", timeout_seconds)
+        self.coordinator.pin_dispatch_polling()
         await self.coordinator.async_request_refresh()
 
 

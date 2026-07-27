@@ -99,6 +99,15 @@ DEFAULT_CONSECUTIVE_FAILURES = 5
 DEFAULT_STALENESS_THRESHOLD = 10  # minutes
 RECOVERY_COOLDOWN_SECONDS = 60    # cooldown between recovery attempts
 
+# Fixed poll interval for the system_time block (seconds).
+# This block's registers include the inverter's seconds field, which changes
+# on virtually every poll — so the adaptive "poll faster when values change"
+# algorithm keeps it pinned at the fastest configured interval forever,
+# causing the Inverter System Time entity to update (and get logged) every
+# poll cycle. Clock drift doesn't need second-level freshness, so this block
+# is pinned to a fixed, slow interval instead of being adaptive.
+SYSTEM_TIME_POLL_INTERVAL = 300   # 5 minutes
+
 # Hard limits for polling configuration
 MIN_POLL_INTERVAL_LIMIT = 5       # Cannot go below 5 seconds
 MAX_POLL_INTERVAL_LIMIT = 3600    # Cannot exceed 1 hour
@@ -114,6 +123,14 @@ STORAGE_DAILY_PRESERVED = "daily_energy_before_unavailable"
 # again after restart.
 STORAGE_DISPATCH_CHARGE_SOC = "dispatch_charge_soc"
 STORAGE_DISPATCH_DISCHARGE_SOC = "dispatch_discharge_soc"
+# Persisted dispatch duration — survives HA reboots/reloads so the Dispatch
+# Duration slider doesn't silently reset to its hardcoded default (120 min).
+# Without this, the entity's value lives only in local memory (_local_value)
+# and is lost every time the number platform is recreated, which also means
+# any dynamic/force dispatch mode started right after a reload can silently
+# read back the 120-minute fallback default instead of the user's real value
+# and terminate early. See GitHub issue #16.
+STORAGE_DISPATCH_DURATION = "dispatch_duration_minutes"
 
 
 @dataclass

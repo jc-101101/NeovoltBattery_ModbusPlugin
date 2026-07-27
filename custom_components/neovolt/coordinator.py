@@ -43,6 +43,10 @@ from .const import (
     COMBINED_BATTERY_DISCHARGE_E,
     STORAGE_DISPATCH_CHARGE_SOC,
     STORAGE_DISPATCH_DISCHARGE_SOC,
+    STORAGE_DISPATCH_DURATION,
+    DYNAMIC_MODE_FAST_POLL_INTERVAL,
+    DISPATCH_DURATION_DEFAULT,
+    SYSTEM_TIME_POLL_INTERVAL,
 )
 from .modbus_client import NeovoltModbusClient
 
@@ -408,6 +412,15 @@ class NeovoltDataUpdateCoordinator(DataUpdateCoordinator):
             default_interval=DEFAULT_POLL_INTERVAL,
         )
 
+        # Pin system_time to a fixed slow interval permanently. Its registers
+        # include the inverter's seconds field, which differs on almost every
+        # poll — so the adaptive "poll faster when values change" logic would
+        # otherwise keep this block pinned at the fastest configured interval
+        # forever, causing the Inverter System Time entity to update (and be
+        # logged) every cycle for no practical benefit (clock drift doesn't
+        # need second-level freshness).
+        self.polling_manager.pin_block_interval("system_time", SYSTEM_TIME_POLL_INTERVAL)
+
         # Initialize recovery manager
         self.recovery_manager = RecoveryManager(
             max_consecutive_failures=consecutive_failures,
@@ -470,9 +483,17 @@ class NeovoltDataUpdateCoordinator(DataUpdateCoordinator):
         self._dispatch_discharge_soc: float = float(
             options.get(STORAGE_DISPATCH_DISCHARGE_SOC, 10.0)
         )
+        # Persisted dispatch duration (minutes) — survives HA reboots/reloads so
+        # the Dispatch Duration slider (and any dispatch mode started right after
+        # a reload) doesn't silently fall back to the hardcoded 120-minute
+        # default. See GitHub issue #16 ("Discharge duration reset").
+        self._dispatch_duration_minutes: float = float(
+            options.get(STORAGE_DISPATCH_DURATION, 120.0)
+        )
         _LOGGER.debug(
-            f"Loaded persisted dispatch SOC targets: "
-            f"charge={self._dispatch_charge_soc}%, discharge={self._dispatch_discharge_soc}%"
+            f"Loaded persisted dispatch targets: "
+            f"charge={self._dispatch_charge_soc}%, discharge={self._dispatch_discharge_soc}%, "
+            f"duration={self._dispatch_duration_minutes}min"
         )
 
         # Use min_interval as the base coordinator update interval
@@ -519,9 +540,10 @@ class NeovoltDataUpdateCoordinator(DataUpdateCoordinator):
         if self._daily_energy_before_unavailable is not None:
             new_options[STORAGE_DAILY_PRESERVED] = self._daily_energy_before_unavailable
 
-        # Save dispatch SOC targets
+        # Save dispatch SOC targets and duration
         new_options[STORAGE_DISPATCH_CHARGE_SOC] = self._dispatch_charge_soc
         new_options[STORAGE_DISPATCH_DISCHARGE_SOC] = self._dispatch_discharge_soc
+        new_options[STORAGE_DISPATCH_DURATION] = self._dispatch_duration_minutes
 
         # Schedule the async config entry update on the event loop
         self.hass.async_create_task(
@@ -1492,9 +1514,33 @@ class NeovoltDataUpdateCoordinator(DataUpdateCoordinator):
             self.set_optimistic_value("dispatch_start", 0)
             self.set_optimistic_value("dispatch_power", 0)
             self.set_optimistic_value("dispatch_mode", 0)
+            self.set_optimistic_value("dispatch_time_remaining", DISPATCH_DURATION_DEFAULT)
+            self.unpin_dispatch_polling()
             _LOGGER.info("DispatchSocWatcher: inverter returned to Normal mode")
         except Exception as e:
             _LOGGER.error(f"DispatchSocWatcher: failed to issue stop command: {e}")
+
+    def pin_dispatch_polling(self) -> None:
+        """Pin the 'dispatch' register block to fast polling.
+
+        Called whenever ANY dispatch mode becomes active (Force Charge,
+        Force Discharge, No Battery Charge, Idle, or any Dynamic mode) so
+        that dispatch_time_remaining / dispatch_power / dispatch_mode reflect
+        the just-written hardware state quickly, instead of waiting for the
+        adaptive polling algorithm to get around to the dispatch block —
+        which can take up to max_poll_interval (default 300s) if it had
+        wound down while the inverter sat idle in Normal mode.
+        """
+        self.polling_manager.pin_block_interval("dispatch", DYNAMIC_MODE_FAST_POLL_INTERVAL)
+
+    def unpin_dispatch_polling(self) -> None:
+        """Release the 'dispatch' register block back to adaptive polling.
+
+        Called whenever dispatch returns to Normal mode (button, select
+        Normal, watcher-triggered stop, or a dynamic manager's own
+        stop/duration-expiry path).
+        """
+        self.polling_manager.unpin_block_interval("dispatch")
 
     def soc_watcher_arm(self, direction: str) -> None:
         """Arm the SOC watcher. Called by select.py when a dispatch is started."""
