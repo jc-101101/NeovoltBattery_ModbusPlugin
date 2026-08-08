@@ -55,7 +55,7 @@ Ensure to power down your system before accessing the comms port to avoid any sh
 
 #### Option A: Direct Ethernet
 
-1. Plug an Ethernet cable into the inverter's Modbus TCP port and connect to your network. On BW-INV-SPH5K this port is labelled LAN on the comms port.
+1. Plug an Ethernet cable into the inverter's Modbus TCP port and connect to your network. On BW-INV-SPH5K this port is labelled LAN on the comms port and appear with hostname "WIZnet".
 2. Power system up
 3. Find the inverter's IP address in your router's device list and note it down.
 4. Reserve a static IP for it in your router's DHCP settings.
